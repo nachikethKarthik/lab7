@@ -45,6 +45,8 @@
       <itemPath>ProjectHeaders/EventCheckers.h</itemPath>
       <itemPath>ProjectHeaders/TestHarnessService0.h</itemPath>
       <itemPath>ProjectHeaders/TimeConstantService.h</itemPath>
+      <itemPath>ProjectHeaders/MotorService.h</itemPath>
+      <itemPath>working_hals_libraries_and_fontstuff/PIC32_AD_Lib.h</itemPath>
     </logicalFolder>
     <logicalFolder name="LinkerScript"
                    displayName="Linker Files"
@@ -57,6 +59,8 @@
       <itemPath>ProjectSource/TestHarnessService0.c</itemPath>
       <itemPath>ProjectSource/main.c</itemPath>
       <itemPath>ProjectSource/TimeConstantService.c</itemPath>
+      <itemPath>ProjectSource/MotorService.c</itemPath>
+      <itemPath>working_hals_libraries_and_fontstuff/PIC32_AD_Lib.c</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"
@@ -69,6 +73,7 @@
     <Elem>FrameworkSource</Elem>
     <Elem>ProjectSource</Elem>
     <Elem>ProjectHeaders</Elem>
+    <Elem>working_hals_libraries_and_fontstuff</Elem>
   </sourceRootList>
   <projectmakefile>Makefile</projectmakefile>
   <confs>

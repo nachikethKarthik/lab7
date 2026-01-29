@@ -58,13 +58,13 @@
 // These are the definitions for Service 1
 #if NUM_SERVICES > 1
 // the header file with the public function prototypes
-#define SERV_1_HEADER "TimeConstantService.h"
+#define SERV_1_HEADER "MotorService.h"
 // the name of the Init function
-#define SERV_1_INIT InitTimeConstantService
+#define SERV_1_INIT InitMotorService
 // the name of the run function
-#define SERV_1_RUN RunTimeConstantService
+#define SERV_1_RUN RunMotorService
 // How big should this services Queue be?
-#define SERV_1_QUEUE_SIZE 3
+#define SERV_1_QUEUE_SIZE 10
 #endif
 
 /****************************************************************************/
@@ -316,9 +316,9 @@ typedef enum
 #define TIMER9_RESP_FUNC TIMER_UNUSED
 #define TIMER10_RESP_FUNC TIMER_UNUSED
 #define TIMER11_RESP_FUNC TIMER_UNUSED
-#define TIMER12_RESP_FUNC TIMER_UNUSED
-#define TIMER13_RESP_FUNC TIMER_UNUSED
-#define TIMER14_RESP_FUNC PostTimeConstantService
+#define TIMER12_RESP_FUNC PostMotorService
+#define TIMER13_RESP_FUNC PostMotorService
+#define TIMER14_RESP_FUNC TIMER_UNUSED //PostTimeConstantService
 #define TIMER15_RESP_FUNC PostTestHarnessService0
 
 /****************************************************************************/
@@ -328,6 +328,8 @@ typedef enum
 // the timer number matches where the timer event will be routed
 // These symbolic names should be changed to be relevant to your application
 
+#define MOTOR_PRINT_TIMER 12
+# define MOTOR_ADC_TIMER 13
 #define TIME_CONST_TIMER 14
 #define SERVICE0_TIMER 15
 
