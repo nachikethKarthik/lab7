@@ -6,18 +6,17 @@
    1.0.2
 
  Description
-   This service implements PWM motor control with encoder feedback for Lab 7
-   Part 1.
+   This service implements closed-loop PI speed control of a DC motor.
+   The potentiometer sets the commanded RPM, and a PI controller running
+   at 2ms intervals adjusts the duty cycle to maintain the target speed.
 
  Notes
- * 
- * Drive-Brake Mode:
-   - Forward: IN 1A = 0, IN 2A = PWM
-   - Reverse: IN 1A = 1, IN 2A = inverted PWM (use 100% - duty cycle)
+ No more direction control via input pin. 
 
  History
  When           Who     What/Why
  -------------- ---     --------
+ 01/29/2026     karthi24    started coding for part 2
  01/28/2026     karthi24    started coding up part 1 of lab 7
  01/16/12 09:58 jec      began conversion from TemplateFSM.c
 ****************************************************************************/
@@ -38,24 +37,31 @@
 
 #define IC_TIMER_PRESCALE   0b011       // 1:8 prescaler
 
-#define RPM_NUMERATOR       49656
+// Control Loop Timer Configuration
+// Timer4 with 1:4 prescaler -> 5 MHz tick rate
+#define CONTROL_TIMER_PRESCALE  0b010   // 1:4 prescaler
+#define CONTROL_TIMER_PERIOD    9999    // For 2ms control loop
+
+#define MAX_COMMANDED_RPM   50 // Used in antiwindup
+
+
+#define PER2RPM       49656
 
 #define ADC_UPDATE_TIME_MS      100     // 10 Hz ADC reading
-#define PRINT_UPDATE_TIME_MS    500     // 2 Hz terminal printing
+#define PRINT_UPDATE_TIME_MS    700     // 1.42 Hz terminal printing
 
-// Direction Control Pin to the motor driver (RB2, pin 6) - IN 1A
+// (RB2, pin 6) - IN 1A - previously used for direction control. only set once for unidirectional PI control
 #define DIR_1A_TRIS         TRISBbits.TRISB2
 #define DIR_1A_ANSEL        ANSELBbits.ANSB2
 #define DIR_1A_LAT          LATBbits.LATB2
 
-// Direction Input Pin changed by user (RA1, pin 3)
-#define DIR_INPUT_TRIS      TRISAbits.TRISA1
-#define DIR_INPUT_ANSEL     ANSELAbits.ANSA1
-#define DIR_INPUT_PORT      PORTAbits.RA1
-
 // PWM Output Pin (RB13, pin 24) - IN 2A via OC4
 #define PWM_PIN_TRIS        TRISBbits.TRISB13
 #define PWM_PIN_ANSEL       ANSELBbits.ANSB13
+
+// Timing Pin (RA2, pin 10) - for ISR timing measurement
+#define TIMING_PIN_TRIS     TRISAbits.TRISA2
+#define TIMING_PIN_LAT      LATAbits.LATA2
 /*---------------------------- Module Functions ---------------------------*/
 /* prototypes for private functions for this service.They should be functions
    relevant to the behavior of this service
@@ -63,8 +69,8 @@
 static void InitPWM(void);
 static void InitDirectionPins(void);
 static void InitInputCapture(void);
-static void SetDutyCycle(uint8_t dutyPercent);
-
+static void InitControlTimer(void);
+static void SetDuty(float dutyPercent);
 /*---------------------------- Module Variables ---------------------------*/
 // with the introduction of Gen2, we need a module level Priority variable
 static uint8_t MyPriority;
@@ -73,7 +79,18 @@ static uint8_t MyPriority;
 static volatile uint16_t CurrentPeriod = 0;
 static volatile uint16_t LastCapture = 0;
 
-static uint8_t CurrentDutyCyclePercent = 0;
+// PI Controller Gains (adjustable via keyboard)
+static float pGain = 0.5;               // Proportional gain - start conservative
+static float iGain = 0.01;              // Integral gain - start small
+
+// PI Controller State (used by Control ISR)
+static volatile float SumError = 0.0;            // Integral accumulator
+static volatile float TargetRPM = 0.0;           // Commanded speed from ADC
+
+// For display (updated by Control ISR)
+static volatile float CurrentRPM = 0.0;
+static volatile float LastRPMError = 0.0;
+static volatile float RequestedDuty = 0.0;
 
 
 /*------------------------------ Module Code ------------------------------*/
@@ -103,6 +120,13 @@ bool InitMotorService(uint8_t Priority)
   /********************************************
    in here you write your initialization code
    *******************************************/
+  
+  // Initialize the Timing pin
+  // RA2 does not have an ANSEL register (not analog-capable)
+    TIMING_PIN_TRIS = 0;            // Set as output
+    TIMING_PIN_LAT = 0;             // Initialize low
+    
+    
   InitDirectionPins();
   
   ADC_ConfigAutoScan(BIT0HI);
@@ -111,15 +135,24 @@ bool InitMotorService(uint8_t Priority)
   
   InitInputCapture();
   
+    // Initialize control loop timer (Timer4, 2ms)
+  InitControlTimer();
+  
   // Print startup message
-    DB_printf("\r\n=== Motor Control Service (For part 1) ===\r\n");
-    DB_printf("RA1 input controls direction\r\n");
-    DB_printf("======================================\r\n");
-    DB_printf("\r\nDuty%%, RPM\r\n");  // CSV header for data collection
+    DB_printf("\r\n=== Motor Control Service (PI controller with anti-windup)===\r\n");
+    DB_printf("Potentiometer sets commanded RPM (0-%d)\r\n", MAX_COMMANDED_RPM);
+    DB_printf("Initial gains: pGain = %d, iGain = %d\r\n", (int)(100 * pGain), (int)(100 * iGain));
+    DB_printf("\r\nKeyboard Controls:\r\n");
+    DB_printf("  'P'/'p' - increase/decrease pGain\r\n");
+    DB_printf("  'I'/'i' - increase/decrease iGain\r\n");
+//    DB_printf("  'r'     - reset integral term\r\n");
+    DB_printf("  '?'     - show current gains\r\n");
+    DB_printf("==============================================\r\n");
+    DB_printf("\r\nTargetRPM, ActualRPM, Error, Duty%%\r\n");
     
     ES_Timer_InitTimer(MOTOR_ADC_TIMER, ADC_UPDATE_TIME_MS);
     
-    // Start periodic timer for terminal printing (2 Hz)
+    // Start periodic timer for terminal printing
     ES_Timer_InitTimer(MOTOR_PRINT_TIMER, PRINT_UPDATE_TIME_MS);
     
     
@@ -159,7 +192,7 @@ bool PostMotorService(ES_Event_t ThisEvent)
 
 /****************************************************************************
  Function
-    RunTemplateService
+    RunMotorService
 
  Parameters
    ES_Event_t : the event to process
@@ -168,7 +201,7 @@ bool PostMotorService(ES_Event_t ThisEvent)
    ES_Event, ES_NO_EVENT if no error ES_ERROR otherwise
 
  Description
-   Handles ADC reading, direction control, and RPM reporting
+   Handles ADC reading for speed command, terminal printing, and gain tuning
  Notes
 
  Author
@@ -185,59 +218,143 @@ ES_Event_t RunMotorService(ES_Event_t ThisEvent)
       case ES_TIMEOUT:
             if (ThisEvent.EventParam == MOTOR_ADC_TIMER)
             {
-                // --- Read Potentiometer ---
+                // --- Read Potentiometer for Speed Command ---
                 uint32_t adcResult[1];
                 ADC_MultiRead(adcResult);
                 
-                // Calculate duty cycle percentage (0-100)
-                CurrentDutyCyclePercent = (adcResult[0] * 100) / 1023;
-                
-                // --- Read Direction Input ---
-                uint8_t directionInput = DIR_INPUT_PORT;
-                
-                // --- Apply Direction and Duty Cycle ---
-                if (directionInput == 0)    // Forward
-                {
-                    DIR_1A_LAT = 0;
-                    SetDutyCycle(CurrentDutyCyclePercent);
-                }
-                else                        // Reverse
-                {
-                    DIR_1A_LAT = 1;
-                    // Invert duty cycle for Drive-Brake with IN1A = 1
-                    SetDutyCycle(100 - CurrentDutyCyclePercent);
-                }
+                // Map ADC (0-1023) to commanded RPM (0-MAX_COMMANDED_RPM)
+                TargetRPM = ((float)adcResult[0] * MAX_COMMANDED_RPM) / 1023.0;
                 
                 // Restart ADC timer
                 ES_Timer_InitTimer(MOTOR_ADC_TIMER, ADC_UPDATE_TIME_MS);
             }
             else if (ThisEvent.EventParam == MOTOR_PRINT_TIMER)
             {
-                // --- Calculate and Print RPM ---
-                // Safely read volatile period
+                // --- Print current state for monitoring ---
+                // Read volatile variables safely
                 __builtin_disable_interrupts();
-                uint16_t periodSnapshot = CurrentPeriod;
+                float displayRPM = CurrentRPM;
+                float displayError = LastRPMError;
+                float displayDuty = RequestedDuty;
                 __builtin_enable_interrupts();
                 
-                if (periodSnapshot > 0)
-                {
-                    uint32_t rpm = RPM_NUMERATOR / periodSnapshot;
-                    
-                    // Print in CSV format for easy data collection
-                    DB_printf("%d, %d\r\n", CurrentDutyCyclePercent, rpm);
-                }
-                else
-                {
-                    // Motor stopped or no encoder pulses
-                    DB_printf("%d, 0\r\n", CurrentDutyCyclePercent);
-                }
+                // Print in CSV format
+                
+                DB_printf("%d, %d, %d, %d\r\n", 
+                          (int)(TargetRPM), (int)(displayRPM), (int)(displayError), (int)(displayDuty));
                 
                 // Restart print timer
                 ES_Timer_InitTimer(MOTOR_PRINT_TIMER, PRINT_UPDATE_TIME_MS);
             }
             break;
+            
+        case ES_NEW_KEY:
+        {
+            char key = (char)ThisEvent.EventParam;
+            
+            switch (key)
+            {
+                case 'P':   // Increase pGain
+                    pGain += 0.1;
+                    DB_printf("pGain = %d\r\n", (int)(100 * pGain));
+                    break;
+                    
+                case 'p':   // Decrease pGain
+                    pGain -= 0.1;
+                    if (pGain < 0) pGain = 0;
+                    DB_printf("pGain = %d\r\n", (int)(100 * pGain));
+                    break;
+                    
+                case 'I':   // Increase iGain
+                    iGain += 0.005;
+                    DB_printf("iGain = %d\r\n", (int)(100 * iGain));
+                    break;
+                    
+                case 'i':   // Decrease iGain
+                    iGain -= 0.005;
+                    if (iGain < 0) iGain = 0;
+                    DB_printf("iGain = %d\r\n", (int)(100 * iGain));
+                    break;
+                    
+//                case 'r':   // Reset integral term
+//                case 'R':
+//                    SumError = 0;
+//                    DB_printf("Integral term reset (SumError = 0)\r\n");
+//                    break;
+                    
+                case '?':   // Show current gains
+                    DB_printf("Current gains: pGain = %d, iGain = %d\r\n", 
+                              (int)(100 * pGain), (int)(100 * iGain));
+                    DB_printf("SumError = %d\r\n", (int)(SumError));
+                    DB_printf("\r\nTargetRPM, ActualRPM, Error, Duty%%\r\n");
+                    break;
+                    
+                default:
+                    break;
+            }
+        }break;
+            
   }
   return ReturnEvent;
+}
+
+/***************************************************************************
+ ISR: Control Loop (Timer4) - Priority 5
+ Runs every 2ms to calculate and apply PI control law
+ ***************************************************************************/
+void __ISR(_TIMER_4_VECTOR, IPL5AUTO) Timer4_ISR(void)
+{
+    // Clear interrupt flag first
+    IFS0CLR = _IFS0_T4IF_MASK;
+    
+    // Raise timing pin on entry
+    TIMING_PIN_LAT = 1;
+    
+    // --- Local variables (static for speed) ---
+    static float RPMError;
+    static uint32_t ThisPeriod;
+    static float Rpm;
+    
+    // --- Get Current Motor Speed ---
+    ThisPeriod = CurrentPeriod;
+    
+    if (ThisPeriod > 0)
+    {
+        Rpm = (float)PER2RPM / (float)ThisPeriod;
+    }
+    else
+    {
+        Rpm = 0;
+    }
+    
+    // --- Calculate Error ---
+    RPMError = TargetRPM - Rpm;
+    SumError += RPMError;
+    
+    // --- Calculate Requested Duty Cycle (PI Control Law) ---
+    RequestedDuty = (pGain * RPMError) + (iGain * SumError);
+    
+    // --- Clamp Output and Apply Anti-Windup ---
+    if (RequestedDuty > 100)
+    {
+        RequestedDuty = 100;
+        SumError -= RPMError;   // Anti-windup
+    }
+    else if (RequestedDuty < 0)
+    {
+        RequestedDuty = 0;
+        SumError -= RPMError;   // Anti-windup
+    }
+    
+    // --- Update values for display ---
+    LastRPMError = RPMError;
+    CurrentRPM = Rpm;
+    
+    // --- Apply Duty Cycle to PWM ---
+    SetDuty(RequestedDuty);
+    
+    // Lower timing pin before exit
+    TIMING_PIN_LAT = 0;
 }
 
 /***************************************************************************
@@ -319,9 +436,7 @@ static void InitDirectionPins(void)
     DIR_1A_TRIS = 0;        // Set as output
     DIR_1A_LAT = 0;         // Initialize low (forward direction)
     
-    // --- Direction Input (RA1) ---
-    DIR_INPUT_ANSEL = 0;    // Disable analog
-    DIR_INPUT_TRIS = 1;     // Set as input
+ 
 }
 
 /****************************************************************************
@@ -366,6 +481,42 @@ static void InitInputCapture(void)
 
 /****************************************************************************
  Function
+     InitControlTimer
+
+ Description
+     Initializes Timer4 for 2ms control loop interrupt
+****************************************************************************/
+static void InitControlTimer(void)
+{
+    // Disable Timer4
+    T4CONbits.ON = 0;
+    
+    // Select internal PBCLK
+    T4CONbits.TCS = 0;
+    
+    // Set prescaler (1:4)
+    T4CONbits.TCKPS = CONTROL_TIMER_PRESCALE;
+    
+    // Clear timer register
+    TMR4 = 0;
+    
+    // Set period for 2ms
+    // PBCLK = 20MHz, Prescaler = 1:4 -> 5MHz tick rate
+    // 2ms = 0.002s * 5,000,000 = 10,000 ticks
+    // PR4 = 10000 - 1 = 9999
+    PR4 = CONTROL_TIMER_PERIOD;
+    
+    // Configure Timer4 interrupt - Priority 5 (LOWER than Input Capture)
+    IFS0CLR = _IFS0_T4IF_MASK;      // Clear interrupt flag
+    IPC4bits.T4IP = 5;              // Priority 5 lower than IC interrupt priority
+    IPC4bits.T4IS = 0;              // Subpriority 0
+    IEC0SET = _IEC0_T4IE_MASK;      // Enable Timer4 interrupt
+    
+    // Enable Timer4
+    T4CONbits.ON = 1;
+}
+/****************************************************************************
+ Function
      SetDutyCycle
 
  Parameters
@@ -374,17 +525,20 @@ static void InitInputCapture(void)
  Description
      Converts percentage to PWM register value and updates OC4RS
 ****************************************************************************/
-static void SetDutyCycle(uint8_t dutyPercent)
+static void SetDuty(float dutyPercent)
 {
     // Clamp to valid range
     if (dutyPercent > 100)
     {
         dutyPercent = 100;
     }
+    else if (dutyPercent < 0)
+    {
+        dutyPercent = 0;
+    }
     
     // Convert percentage to PWM register value
-    // dutyValue = (dutyPercent * PWM_PERIOD) / 100
-    uint32_t dutyValue = ((uint32_t)dutyPercent * PWM_PERIOD) / 100;
+    uint32_t dutyValue = (uint32_t)((dutyPercent * PWM_PERIOD) / 100.0);
     
     // Write to OC4RS (double-buffered, updates on next period match)
     OC4RS = dutyValue;
