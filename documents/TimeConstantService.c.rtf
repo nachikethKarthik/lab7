@@ -1,0 +1,230 @@
+{\rtf1\ansi \deff1{\fonttbl{\f1\fmodern\fprq1\fcharset0 Consolas;}}{\colortbl;\red255\green255\blue255;\red51\green00\blue102;\red24\green97\blue167;\red50\green186\blue06;\red00\green102\blue51;\red00\green102\blue51;\red166\green23\blue97;\red83\green116\blue176;\red102\green51\blue00;\red154\green154\blue154;\red85\green85\blue85;\red166\green23\blue97;\red255\green00\blue00;\red255\green00\blue00;\red255\green48\blue48;\red244\green140\blue35;\red209\green28\blue237;\red221\green130\blue13;\red119\green106\blue184;}
+\paperw11905\paperh16837\margl1134\margr1134\margt1134\margb1134\sectd\plain\f1\fs20
+\pard \cbpat1{{\cf2{}}{\cf6{/****************************************************************************}}}\par\pard
+\cbpat1{{\cf6{ Module}}}\par\pard
+\cbpat1{{\cf6{   TimeConstantService.c}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Revision}}}\par\pard
+\cbpat1{{\cf6{   {1}.{0}.{2}}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Description}}}\par\pard
+\cbpat1{{\cf6{    This service generates a square wave on RA{2} (pin {1}{0}) to help measure}}}\par\pard
+\cbpat1{{\cf6{   the motor's electrical time constant.}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Notes}}}\par\pard
+\cbpat1{{\cf6{   - Controls:}}}\par\pard
+\cbpat1{{\cf6{        't' - Start toggling}}}\par\pard
+\cbpat1{{\cf6{        's' - Stop toggling}}}\par\pard
+\cbpat1{{\cf6{ History}}}\par\pard
+\cbpat1{{\cf6{ When           Who     What/Why}}}\par\pard
+\cbpat1{{\cf6{ -------------- ---     --------}}}\par\pard
+\cbpat1{{\cf6{ {0}{1}/{2}{8}/{2}{0}{2}{6}     karthi{2}{4}    Started coding service to find time constant}}}\par\pard
+\cbpat1{{\cf6{ {0}{1}/{1}{6}/{1}{2} {0}{9}:{5}{8} jec      began conversion from TemplateFSM.c}}}\par\pard
+\cbpat1{{\cf6{****************************************************************************/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/*----------------------------- Include Files -----------------------------*/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/* include header files for this state machine as well as any machines at the}}}\par\pard
+\cbpat1{{\cf6{   next lower level in the hierarchy that are sub-machines to this machine}}}\par\pard
+\cbpat1{{\cf6{*/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf8{#include}} {\cf9{"ES_Configure.h"}}{\cf8{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf8{#include}} {\cf9{"ES_Framework.h"}}{\cf8{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf8{#include}} {\cf9{"TimeConstantService.h"}}{\cf8{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf8{#include}} {\cf9{"dbprintf.h"}}{\cf8{}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/*----------------------------- Module Defines ----------------------------*/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf5{// Pin definitions for RA{2} (pin {1}{0})}}}\par\pard
+\cbpat1{{\cf2{}}{\cf8{#define SQUARE_WAVE_TRIS    TRISAbits.TRISA{2}}}}\par\pard
+\cbpat1{{\cf2{}}{\cf8{#define SQUARE_WAVE_LAT     LATAbits.LATA{2}}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf5{// Timer settings}}}\par\pard
+\cbpat1{{\cf2{}}{\cf8{#define INITIAL_HALF_PERIOD_MS  {5}{0}{0}}}       {\cf5{// Start with {1}{0}{0}ms half-period ({5} Hz square wave)}}}\par\pard
+\cbpat1{{\cf8{}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/*---------------------------- Module Functions ---------------------------*/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/* prototypes for private functions for this service.They should be functions}}}\par\pard
+\cbpat1{{\cf6{   relevant to the behavior of this service}}}\par\pard
+\cbpat1{{\cf6{*/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/*---------------------------- Module Variables ---------------------------*/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf5{// with the introduction of Gen{2}, we need a module level Priority variable}}}\par\pard
+\cbpat1{{\cf2{}}{\cf16{static uint{8}_t}} {\cf2{MyPriority}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}{\cf5{// States for the state machine}}}\par\pard
+\cbpat1{{\cf2{}}{\cf17{typedef}} {\cf2{}}{\cf16{enum}} {\cf2{}}{\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{    IDLE}}{\cf11{,}}}\par\pard
+\cbpat1{{\cf2{    TOGGLING}}}\par\pard
+\cbpat1{{\cf2{}}{\cf11{\}}} {\cf2{ServiceState_t}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf16{static}} {\cf2{ServiceState_t CurrentState}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}{\cf16{static uint{8}_t}} {\cf2{PinState}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}{\cf16{static uint{1}{6}_t}} {\cf2{HalfPeriodMS}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/*------------------------------ Module Code ------------------------------*/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/****************************************************************************}}}\par\pard
+\cbpat1{{\cf6{ Function}}}\par\pard
+\cbpat1{{\cf6{     InitTimeConstantService}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Parameters}}}\par\pard
+\cbpat1{{\cf6{     uint{8}_t : the priorty of this service}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Returns}}}\par\pard
+\cbpat1{{\cf6{     bool, false if error in initialization, true otherwise}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Description}}}\par\pard
+\cbpat1{{\cf6{     Saves away the priority, and does any}}}\par\pard
+\cbpat1{{\cf6{     other required initialization for this service}}}\par\pard
+\cbpat1{{\cf6{ Notes}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Author}}}\par\pard
+\cbpat1{{\cf6{     J. Edward Carryer, {0}{1}/{1}{6}/{1}{2}, {1}{0}:{0}{0}}}}\par\pard
+\cbpat1{{\cf6{****************************************************************************/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf16{bool}} {\cf2{}}{\cf17{InitTimeConstantService}}{\cf2{}}{\cf11{(}}{\cf2{}}{\cf16{uint{8}_t}} {\cf2{Priority}}{\cf11{)}}}\par\pard
+\cbpat1{{\cf2{}}{\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{  ES_Event_t ThisEvent}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{  MyPriority}} {\cf11{=}} {\cf2{Priority}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf6{/********************************************}}}\par\pard
+\cbpat1{{\cf6{   in here you write your initialization code}}}\par\pard
+\cbpat1{{\cf6{   *******************************************/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{    CurrentState}} {\cf11{=}} {\cf2{IDLE}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{    PinState}} {\cf11{=}} {\cf2{}}{\cf4{{0}}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{    HalfPeriodMS}} {\cf11{=}} {\cf2{INITIAL_HALF_PERIOD_MS}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}  }\par\pard
+\cbpat1{{\cf2{}}  {\cf5{// Configure RA{2} as digital output}}}\par\pard
+\cbpat1{{\cf2{    SQUARE_WAVE_TRIS}} {\cf11{=}} {\cf2{}}{\cf4{{0}}}{\cf2{}}{\cf11{;}}   {\cf2{}}{\cf5{// Set as output}}}\par\pard
+\cbpat1{{\cf2{    SQUARE_WAVE_LAT}} {\cf11{=}} {\cf2{}}{\cf4{{0}}}{\cf2{}}{\cf11{;}}    {\cf2{}}{\cf5{// Initialize low}}}\par\pard
+\cbpat1{{\cf2{}}    }\par\pard
+\cbpat1{{\cf2{}}    {\cf17{DB_printf}}{\cf2{}}{\cf11{(}}{\cf2{}}{\cf3{"}}{\cf7{\\r\\n}}{\cf3{=== Time Constant Measurement Service ===}}{\cf7{\\r\\n}}{\cf3{"}}{\cf2{}}{\cf11{);}}}\par\pard
+\cbpat1{{\cf2{}}    {\cf17{DB_printf}}{\cf2{}}{\cf11{(}}{\cf2{}}{\cf3{"Commands:}}{\cf7{\\r\\n}}{\cf3{"}}{\cf2{}}{\cf11{);}}}\par\pard
+\cbpat1{{\cf2{}}    {\cf17{DB_printf}}{\cf2{}}{\cf11{(}}{\cf2{}}{\cf3{"  't' - Start square wave}}{\cf7{\\r\\n}}{\cf3{"}}{\cf2{}}{\cf11{);}}}\par\pard
+\cbpat1{{\cf2{}}    {\cf17{DB_printf}}{\cf2{}}{\cf11{(}}{\cf2{}}{\cf3{"  's' - Stop square wave}}{\cf7{\\r\\n}}{\cf3{"}}{\cf2{}}{\cf11{);}}}\par\pard
+\cbpat1{{\cf2{}}    {\cf17{DB_printf}}{\cf2{}}{\cf11{(}}{\cf2{}}{\cf3{"Current half-period:}} {\cf12{%d}} {\cf3{ms (%.{1}f Hz)}}{\cf7{\\r\\n}}{\cf3{"}}{\cf2{}}{\cf11{,}} }\par\pard
+\cbpat1{{\cf2{              HalfPeriodMS}}{\cf11{,}} {\cf2{}}{\cf4{{1}{0}{0}{0}.{0}}} {\cf2{}}{\cf11{/ (}}{\cf2{}}{\cf4{{2}.{0}}} {\cf2{}}{\cf11{*}} {\cf2{HalfPeriodMS}}{\cf11{));}}}\par\pard
+\cbpat1{{\cf2{}}    {\cf17{DB_printf}}{\cf2{}}{\cf11{(}}{\cf2{}}{\cf3{"=========================================}}{\cf7{\\r\\n\\n}}{\cf3{"}}{\cf2{}}{\cf11{);}}}\par\pard
+\cbpat1{{\cf2{}}  }\par\pard
+\cbpat1{{\cf2{}}  {\cf5{// post the initial transition event}}}\par\pard
+\cbpat1{{\cf2{  ThisEvent}}{\cf11{.}}{\cf2{EventType}} {\cf11{=}} {\cf2{ES_INIT}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf15{if}} {\cf2{}}{\cf11{(}}{\cf2{}}{\cf17{ES_PostToService}}{\cf2{}}{\cf11{(}}{\cf2{MyPriority}}{\cf11{,}} {\cf2{ThisEvent}}{\cf11{) ==}} {\cf2{}}{\cf15{true}}{\cf2{}}{\cf11{)}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{}}    {\cf15{return true}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf15{else}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{}}    {\cf15{return false}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}{\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/****************************************************************************}}}\par\pard
+\cbpat1{{\cf6{ Function}}}\par\pard
+\cbpat1{{\cf6{     PostTimeConstantService}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Parameters}}}\par\pard
+\cbpat1{{\cf6{     EF_Event_t ThisEvent ,the event to post to the queue}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Returns}}}\par\pard
+\cbpat1{{\cf6{     bool false if the Enqueue operation failed, true otherwise}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Description}}}\par\pard
+\cbpat1{{\cf6{     Posts an event to this state machine's queue}}}\par\pard
+\cbpat1{{\cf6{ Notes}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Author}}}\par\pard
+\cbpat1{{\cf6{     J. Edward Carryer, {1}{0}/{2}{3}/{1}{1}, {1}{9}:{2}{5}}}}\par\pard
+\cbpat1{{\cf6{****************************************************************************/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf16{bool}} {\cf2{}}{\cf17{PostTimeConstantService}}{\cf2{}}{\cf11{(}}{\cf2{ES_Event_t ThisEvent}}{\cf11{)}}}\par\pard
+\cbpat1{{\cf2{}}{\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf15{return}} {\cf2{}}{\cf17{ES_PostToService}}{\cf2{}}{\cf11{(}}{\cf2{MyPriority}}{\cf11{,}} {\cf2{ThisEvent}}{\cf11{);}}}\par\pard
+\cbpat1{{\cf2{}}{\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/****************************************************************************}}}\par\pard
+\cbpat1{{\cf6{ Function}}}\par\pard
+\cbpat1{{\cf6{    RunTimeConstantService}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Parameters}}}\par\pard
+\cbpat1{{\cf6{   ES_Event_t : the event to process}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Returns}}}\par\pard
+\cbpat1{{\cf6{   ES_Event, ES_NO_EVENT if no error ES_ERROR otherwise}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Description}}}\par\pard
+\cbpat1{{\cf6{   Implements the state machine for square wave generation}}}\par\pard
+\cbpat1{{\cf6{ Notes}}}\par\pard
+\cbpat1{{\cf6{}}}\par\pard
+\cbpat1{{\cf6{ Author}}}\par\pard
+\cbpat1{{\cf6{   J. Edward Carryer, {0}{1}/{1}{5}/{1}{2}, {1}{5}:{2}{3}}}}\par\pard
+\cbpat1{{\cf6{****************************************************************************/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{ES_Event_t}} {\cf17{RunTimeConstantService}}{\cf2{}}{\cf11{(}}{\cf2{ES_Event_t ThisEvent}}{\cf11{)}}}\par\pard
+\cbpat1{{\cf2{}}{\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{  ES_Event_t ReturnEvent}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{  ReturnEvent}}{\cf11{.}}{\cf2{EventType}} {\cf11{=}} {\cf2{ES_NO_EVENT}}{\cf11{;}} {\cf2{}}{\cf5{// assume no errors}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf6{/********************************************}}}\par\pard
+\cbpat1{{\cf6{   in here you write your service code}}}\par\pard
+\cbpat1{{\cf6{   *******************************************/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf15{switch}} {\cf2{}}{\cf11{(}}{\cf2{CurrentState}}{\cf11{)\{}}}\par\pard
+\cbpat1{{\cf2{}}        {\cf15{case}} {\cf2{IDLE}}{\cf11{:}}}\par\pard
+\cbpat1{{\cf2{}}              {\cf15{if}} {\cf2{}}{\cf11{(}}{\cf2{ThisEvent}}{\cf11{.}}{\cf2{EventType}} {\cf11{==}} {\cf2{ES_NEW_KEY}}{\cf11{)}}}\par\pard
+\cbpat1{{\cf2{}}              {\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{}}                  {\cf16{char}} {\cf2{key}} {\cf11{= (}}{\cf2{}}{\cf16{char}}{\cf2{}}{\cf11{)}}{\cf2{ThisEvent}}{\cf11{.}}{\cf2{EventParam}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}                  {\cf15{if}} {\cf2{}}{\cf11{(}}{\cf2{key}} {\cf11{==}} {\cf2{}}{\cf3{'t'}}{\cf2{}} {\cf11{||}} {\cf2{key}} {\cf11{==}} {\cf2{}}{\cf3{'T'}}{\cf2{}}{\cf11{)}}}\par\pard
+\cbpat1{{\cf2{}}                  {\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{}}                      {\cf5{// Start toggling}}}\par\pard
+\cbpat1{{\cf2{}}                      {\cf17{DB_printf}}{\cf2{}}{\cf11{(}}{\cf2{}}{\cf3{"Starting square wave...}}{\cf7{\\r\\n}}{\cf3{"}}{\cf2{}}{\cf11{);}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}                      {\cf5{// Set pin high and start timer}}}\par\pard
+\cbpat1{{\cf2{                      PinState}} {\cf11{=}} {\cf2{}}{\cf4{{1}}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{                      SQUARE_WAVE_LAT}} {\cf11{=}} {\cf2{}}{\cf4{{1}}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}                      {\cf17{ES_Timer_InitTimer}}{\cf2{}}{\cf11{(}}{\cf2{TIME_CONST_TIMER}}{\cf11{,}} {\cf2{HalfPeriodMS}}{\cf11{);}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{                      CurrentState}} {\cf11{=}} {\cf2{TOGGLING}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}                  {\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}              {\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}              {\cf15{break}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}        }\par\pard
+\cbpat1{{\cf2{}}        {\cf15{case}} {\cf2{TOGGLING}}{\cf11{:}}}\par\pard
+\cbpat1{{\cf2{}}            {\cf15{if}} {\cf2{}}{\cf11{(}}{\cf2{ThisEvent}}{\cf11{.}}{\cf2{EventType}} {\cf11{==}} {\cf2{ES_TIMEOUT}} {\cf11{&&}} }\par\pard
+\cbpat1{{\cf2{                ThisEvent}}{\cf11{.}}{\cf2{EventParam}} {\cf11{==}} {\cf2{TIME_CONST_TIMER}}{\cf11{)}}}\par\pard
+\cbpat1{{\cf2{}}            {\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{}}                {\cf5{// Toggle the pin}}}\par\pard
+\cbpat1{{\cf2{}}                {\cf15{if}} {\cf2{}}{\cf11{(}}{\cf2{PinState}} {\cf11{==}} {\cf2{}}{\cf4{{1}}}{\cf2{}}{\cf11{)}}}\par\pard
+\cbpat1{{\cf2{}}                {\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{                    PinState}} {\cf11{=}} {\cf2{}}{\cf4{{0}}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{                    SQUARE_WAVE_LAT}} {\cf11{=}} {\cf2{}}{\cf4{{0}}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}                {\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}                {\cf15{else}}}\par\pard
+\cbpat1{{\cf2{}}                {\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{                    PinState}} {\cf11{=}} {\cf2{}}{\cf4{{1}}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{                    SQUARE_WAVE_LAT}} {\cf11{=}} {\cf2{}}{\cf4{{1}}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}                {\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}                }\par\pard
+\cbpat1{{\cf2{}}                {\cf5{// Restart timer for next toggle}}}\par\pard
+\cbpat1{{\cf2{}}                {\cf17{ES_Timer_InitTimer}}{\cf2{}}{\cf11{(}}{\cf2{TIME_CONST_TIMER}}{\cf11{,}} {\cf2{HalfPeriodMS}}{\cf11{);}}}\par\pard
+\cbpat1{{\cf2{}}            {\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}            {\cf15{else if}} {\cf2{}}{\cf11{(}}{\cf2{ThisEvent}}{\cf11{.}}{\cf2{EventType}} {\cf11{==}} {\cf2{ES_NEW_KEY}}{\cf11{)}}}\par\pard
+\cbpat1{{\cf2{}}            {\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{}}                {\cf16{char}} {\cf2{key}} {\cf11{= (}}{\cf2{}}{\cf16{char}}{\cf2{}}{\cf11{)}}{\cf2{ThisEvent}}{\cf11{.}}{\cf2{EventParam}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}                }\par\pard
+\cbpat1{{\cf2{}}                {\cf15{if}} {\cf2{}}{\cf11{(}}{\cf2{key}} {\cf11{==}} {\cf2{}}{\cf3{'s'}}{\cf2{}} {\cf11{||}} {\cf2{key}} {\cf11{==}} {\cf2{}}{\cf3{'S'}}{\cf2{}}{\cf11{)}}}\par\pard
+\cbpat1{{\cf2{}}                {\cf11{\{}}}\par\pard
+\cbpat1{{\cf2{}}                    {\cf5{// Stop toggling}}}\par\pard
+\cbpat1{{\cf2{}}                    {\cf17{DB_printf}}{\cf2{}}{\cf11{(}}{\cf2{}}{\cf3{"Stopping square wave.}}{\cf7{\\r\\n}}{\cf3{"}}{\cf2{}}{\cf11{);}}}\par\pard
+\cbpat1{{\cf2{}}                    }\par\pard
+\cbpat1{{\cf2{}}                    {\cf5{// Set pin low and stop timer}}}\par\pard
+\cbpat1{{\cf2{                    SQUARE_WAVE_LAT}} {\cf11{=}} {\cf2{}}{\cf4{{0}}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{                    PinState}} {\cf11{=}} {\cf2{}}{\cf4{{0}}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}                    {\cf17{ES_Timer_StopTimer}}{\cf2{}}{\cf11{(}}{\cf2{TIME_CONST_TIMER}}{\cf11{);}}}\par\pard
+\cbpat1{{\cf2{}}                    }\par\pard
+\cbpat1{{\cf2{                    CurrentState}} {\cf11{=}} {\cf2{IDLE}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}                {\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}            {\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}            {\cf15{break}}{\cf2{}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}  {\cf15{return}} {\cf2{ReturnEvent}}{\cf11{;}}}\par\pard
+\cbpat1{{\cf2{}}{\cf11{\}}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/***************************************************************************}}}\par\pard
+\cbpat1{{\cf6{ private functions}}}\par\pard
+\cbpat1{{\cf6{ ***************************************************************************/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/*------------------------------- Footnotes -------------------------------*/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}{\cf6{/*------------------------------ End of file ------------------------------*/}}{\cf2{}}}\par\pard
+\cbpat1{{\cf2{}}}\par\pard
+\cbpat1{}}
